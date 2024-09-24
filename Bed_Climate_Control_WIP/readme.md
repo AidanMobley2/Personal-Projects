@@ -16,3 +16,12 @@ The remote currently contains three buttons and a 128x32 pixel OLED display. Two
 
 ### Fan (Client)
 
+The fan controller currently contains a 12 V 120 mm server fan, a 5 V buck converter, and a LCD screen which will most likely be removed soon. The ESP32 that controls the fan reads the data written by the server, decodes it, and uses the information to set the LCD backlight value and fan level. The fan takes a PWM signal to set the speed. The ESP32 takes the level value from the server and multiplies it by 6.375 to provide the fan with a PWM value that ranges from 0 to 255. 
+
+## Current and Future Work
+
+Since this project is a work in progress, there are more features I want to add in hardware and firmware. Currently, all the electronics are being held on solderless breadboards which are not a very good permanent solution. 
+
+### Heater
+
+I am currently working on adding a heater to the fan so it can heat as well as cool. This turned out to be more complicated than I expected since the heater draws much more current than I am used to working with. This results in some components becoming very hot so I need to manage the heat of the components as well as the heater. I am using smoothed PWM to variably turn on a MOSFET so it acts like a variable resistor. I initially tried just using the PWM to directly drive the MOSFET and therefore control the heater using PWM, but this caused an annoying buzzing to come from both the power supply and the ESP32. I tried using an RC lowpass filter to smooth the signal, but the buzzing still persisted and I would need to purchase very large and expensive components to properly filter the signal. Using the MOSFET as a variable resistor works, but since it is now consuming power and is in a standard T220 package, it is difficult to prevent it from overheating. I am currently looking for the best way to cool down the components.

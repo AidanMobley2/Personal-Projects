@@ -4,8 +4,7 @@
 #define PRINT           0
 
 #define OUT_PIN         23
-#define BACKLIGHT_PIN   18
-#define DIMM_PIN        27
+#define DIM_PIN        27
 
 #define SERVER_NAME   "Big Fan"
 
@@ -20,11 +19,6 @@ String connected_d = "Not Connected";
 static BLEAddress *pServerAddress;
 
 static BLERemoteCharacteristic* levelCharacteristic;
-
-//const uint8_t notificationOn[] = {0x1, 0x0};
-//const uint8_t notificationOff[] = {0x0, 0x0};
-
-//int* level_p;
 
 class MyClientCallback : public BLEClientCallbacks {
   void onConnect(BLEClient *pclient) {}
@@ -80,12 +74,6 @@ bool connectToServer(BLEAddress pAddress) {
     #endif
   }
  
-  //Assign callback functions for the Characteristics
-  /*
-  if (levelCharacteristic->canNotify()) {
-    levelCharacteristic->registerForNotify(levelNotifyCallback);
-  }
-  */
   return true;
 }
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
@@ -101,26 +89,20 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   }
 };
 
-/*
-static void levelNotifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic, 
-                                    uint8_t* pData, size_t length, bool isNotify) {
-  level_p = (int*)pData;
-}
-*/
-
 int level, prev_level = 10;
 int out_level;
 int out_val;
 
+uint16_t value;
 uint16_t prev_value = 0;
 
-byte back_curr_val, back_prev_val = 0;
 byte backlight_val = 0;
 
 LiquidCrystal_PCF8574 lcd(0x27);
 
 //long int start_time;
 //int count = 0;
+bool first_loop = true;
 
 
 void setup() {
@@ -132,15 +114,14 @@ void setup() {
 
   // Setting pinModes for all pins used
   pinMode(OUT_PIN, OUTPUT);
-  pinMode(BACKLIGHT_PIN, INPUT_PULLDOWN);
-  pinMode(DIMM_PIN, OUTPUT);
+  pinMode(DIM_PIN, OUTPUT);
 
   // Setting fan pwm frequency to 25 kHz because the fan prefers this frequency
   analogWriteFrequency(OUT_PIN, 25000);
-  analogWriteFrequency(DIMM_PIN, 5000);
+  analogWriteFrequency(DIM_PIN, 5000);
 
   analogWrite(OUT_PIN, 0);
-  analogWrite(DIMM_PIN, 10);
+  analogWrite(DIM_PIN, 10);
 
   // Setting up the LCD
   lcd.begin(16, 2);
@@ -183,6 +164,9 @@ void loop() {
       prev_value = levelCharacteristic->readUInt16();
       prev_level = prev_value/10;
       connected = true;
+      connected_d = "Connected    ";
+      lcd.setCursor(0, 1);
+      lcd.print(connected_d);
     } else {
       #if PRINT
         Serial.println("We have failed to connect to the server; Restart your device to scan for nearby BLE server again.");
@@ -201,68 +185,52 @@ void loop() {
   }
  
   else{
-    connected_d = "Connected    ";
-    lcd.setCursor(0, 1);
-    lcd.print(connected_d);
-
     get_data_read();
+
+    // Only updates if a button was pressed on the remote
+    if(value != prev_value | first_loop){
+      // Sets the backlight on or off
+      lcd.setBacklight(backlight_val);
+
+      #if PRINT
+        Serial.println(level);
+      #endif
+
+      // Calculates the pwm value to send to the fan
+      out_val = level*6.375;
+      analogWrite(OUT_PIN, out_val);
+
+      String d_level = "";
+      d_level += String(level);
+      d_level += " ";
+
+      lcd.setCursor(7, 0);
+      lcd.print(d_level);
+    }
+    prev_value = value;
+    first_loop = false;
   }
   //was_connected = connected;
 
-  // Sets the backlight on or off
-  back_curr_val = digitalRead(BACKLIGHT_PIN);
-
-  if((back_curr_val == 1) & (back_prev_val == 0)){
-    if(backlight_val == 0)
-      backlight_val = 1;
-
-    else
-      backlight_val = 0;
-  }
-  back_prev_val = back_curr_val;
-  if(backlight_val == 1)
-    lcd.setBacklight(1);
-  else
-    lcd.setBacklight(0);
-
-
-  #if PRINT
-    Serial.println(level);
-  #endif
-
-  // Calculates the pwm value to send to the fan
-  out_val = level*6.375;
-  analogWrite(OUT_PIN, out_val);
-
-  String d_level = "";
-  d_level += String(level);
-  d_level += " ";
-
-  lcd.setCursor(7, 0);
-  lcd.print(d_level);
-  
   delay(100);
 }
 // Gets the data the sever recorded and decodes it into the backlight and fan level values
 void get_data_read(){
-  uint16_t value = levelCharacteristic->readUInt16();
+  value = levelCharacteristic->readUInt16();
   #if PRINT
     Serial.print(value);
     Serial.print('\t');
   #endif
-  if(value%10 != prev_value%10){
-    if(backlight_val == 1)
-      backlight_val = 0;
-    else
-      backlight_val = 1;
-  }
-  prev_value = value;
-  value = value/10;
 
-  if((value < prev_level-1) || (value > prev_level+1))
+  // Gets the backlight value
+  backlight_val = value%10;
+
+  // Isolates the fan speed level
+  uint16_t val = value/10;
+  if((val < prev_level-1) || (val > prev_level+1))
     level = prev_level;
   else
-    level = value;
+    level = val;
   
   prev_level = level;
 }
