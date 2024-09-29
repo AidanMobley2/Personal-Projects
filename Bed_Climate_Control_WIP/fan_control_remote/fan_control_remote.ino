@@ -17,13 +17,22 @@
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
 
-#define PRINT         0
+#define PRINT           1
 
 // SDA is 21, SCL is 22
 #define SERVER_NAME     "Big Fan"
-#define UP_PIN          18
+#define UP_PIN          15
 #define DOWN_PIN        4
-#define BACKLIGHT_PIN   23
+#define BACKLIGHT_PIN   12
+
+// Setting up deep sleep
+#define PIN_BITMASK     0x9010   // pin 4, 12, and 15 right now
+#define TIME_TILL_SLEEP 15000
+
+unsigned long int button_time;
+
+// time the screen stays on after button is pressed in milliseconds
+#define SCREEN_TIME     10000
 
 Preferences last_data;
 
@@ -45,7 +54,6 @@ int data;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 bool display_working = true;
 bool display_off = false;
-unsigned long int display_on_time;
 bool button_pressed = true;
 
 #define SERVICE_UUID        "00a9cede-ba07-453c-8a6f-f1ddb24e23ac"
@@ -60,6 +68,29 @@ class MyServerCallbacks: public BLEServerCallbacks {
     deviceConnected = false;
   }
 };
+
+void increment_from_wakeup(){
+  // I found this in a Random Nerd Tutorial about deep sleep
+  int GPIO_reason = esp_sleep_get_ext1_wakeup_status();
+  int pin = log(GPIO_reason)/log(2);
+
+  #if PRINT
+    Serial.printf("%d\n", pin);
+  #endif
+
+  if(pin == UP_PIN){
+    level++;
+  }
+  else if(pin == DOWN_PIN){
+    level--;
+  }
+  else if(pin == BACKLIGHT_PIN){
+    if(backlight_val == 0)
+      backlight_val = 1;
+    else
+      backlight_val = 0;
+  }
+}
 
 void setup() {
   #if PRINT
@@ -77,9 +108,12 @@ void setup() {
   backlight_val = data%10;
   level = data/10;
 
-  pinMode(UP_PIN, INPUT_PULLDOWN);
-  pinMode(DOWN_PIN, INPUT_PULLDOWN);
-  pinMode(BACKLIGHT_PIN, INPUT_PULLDOWN);
+  pinMode(UP_PIN, INPUT);
+  pinMode(DOWN_PIN, INPUT);
+  pinMode(BACKLIGHT_PIN, INPUT);
+
+  // Setting up pins to wake from deep sleep
+  esp_sleep_enable_ext1_wakeup(PIN_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH);
 
   // Initializing OLED display
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
@@ -110,11 +144,13 @@ void setup() {
     display.display(); 
   }
 
-  display_on_time = millis();
+  increment_from_wakeup();
+
+  button_time = millis();
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:  
+  // If the client disconnects, start advertising again
   if(deviceConnected_prev & !deviceConnected){
     deviceConnected_prev = deviceConnected;
     delay(500);
@@ -134,7 +170,6 @@ void loop() {
     else
       backlight_val = 0;
     
-    display_on_time = millis();
     button_pressed = true;
   }
 
@@ -142,13 +177,11 @@ void loop() {
   if((up_curr_val == 1) & (up_prev_val == 0) & (level < 40)){
     level++;
 
-    display_on_time = millis();
     button_pressed = true;
   }
   else if((down_curr_val == 1) & (down_prev_val == 0) & (level > 0)){
     level--;
 
-    display_on_time = millis();
     button_pressed = true;
   }
   // Setting the previous values to the current values for the next check
@@ -156,22 +189,25 @@ void loop() {
   down_prev_val = down_curr_val;
   back_prev_val = back_curr_val;
 
+  data = level*10 + backlight_val;
+
   #if PRINT
-    Serial.print(up_curr_val); Serial.print('\t');
-    Serial.print(down_curr_val); Serial.print('\t');
-    Serial.println(level);
+    Serial.printf("%d\t%d\t%d\t%d\n", up_curr_val, down_curr_val, level, display_working);
   #endif
 
-  if(deviceConnected){
-    data = level*10 + backlight_val;
-    
-    levelCharacteristic.setValue(data);
+  // Update the data stored in flash memory whenever a button is pressed
+  if(button_pressed){
+    last_data.begin("my_app", false);
+    last_data.putInt("data", data);
+    last_data.end();
+
+    button_time = millis();
   }
   
   // Update the display whenever applicable 
   // The temperature setting is a placeholder for now
   if(display_working){
-    if((display_on_time+15000 > millis()) & button_pressed){
+    if((button_time+SCREEN_TIME > millis()) & button_pressed){
       display.clearDisplay();
       display.setCursor(0, 0);
       display.println("Lvl:");
@@ -184,20 +220,27 @@ void loop() {
       display.display();
       display_off = false;
     }
-    else if(display_on_time+15000 < millis() & !display_off){
+    else if(button_time+SCREEN_TIME < millis() & !display_off){
       display.clearDisplay();
       display.display();
       display_off = true;
     }
   }
-  // Update the data stored in flash memory whenever a button is pressed
-  if(button_pressed){
-    last_data.begin("my_app", false);
-    last_data.putInt("data", data);
-    last_data.end();
 
-    button_pressed = false;
+  // Put the ESP32 into deep sleep 15 seconds after pressing a button
+  if(button_time+TIME_TILL_SLEEP < millis()){
+    if(display_working & !display_off){
+      display.clearDisplay();
+      display.display();
+    }
+    esp_deep_sleep_start();
   }
- 
-  delay(100);
+
+  if(deviceConnected & button_pressed){
+    levelCharacteristic.setValue(data);
+  }
+
+  button_pressed = false;
+
+  delay(10);
 }
