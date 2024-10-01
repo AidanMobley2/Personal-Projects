@@ -4,6 +4,7 @@
     updates by chegewara
 
     link to non-volatile storage stuff https://randomnerdtutorials.com/esp32-save-data-permanently-preferences/
+    link to deep sleep tutorial https://randomnerdtutorials.com/esp32-deep-sleep-arduino-ide-wake-up-sources/ 
 */
 
 #include <BLEDevice.h>
@@ -17,7 +18,7 @@
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
 
-#define PRINT           1
+#define PRINT           0
 
 // SDA is 21, SCL is 22
 #define SERVER_NAME     "Big Fan"
@@ -27,7 +28,7 @@
 
 // Setting up deep sleep
 #define PIN_BITMASK     0x9010   // pin 4, 12, and 15 right now
-#define TIME_TILL_SLEEP 15000
+#define TIME_TILL_SLEEP 20000
 
 unsigned long int button_time;
 
@@ -90,13 +91,17 @@ void increment_from_wakeup(){
     else
       backlight_val = 0;
   }
+
+  data = 10*level + backlight_val;
 }
 
 void setup() {
   #if PRINT
     Serial.begin(9600);
-    Serial.println("Starting BLE work!");
   #endif
+
+  // Lower CPU frequency to 80 MHz to lower power consumption
+  setCpuFrequencyMhz(160);
 
   last_data.begin("my_app", false);  // start partition with namespace "my_app" in read/write mode
   // Remove all preferences under the opened namespace
@@ -121,7 +126,7 @@ void setup() {
     display_working = false;
   }
 
-  BLEDevice::init(SERVER_NAME);
+  BLEDevice::init(SERVER_NAME);   // Trying a cpu frequency lower than 80 MHz breaks at this line
   BLEServer *pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
   BLEService *pService = pServer->createService(SERVICE_UUID);
@@ -144,7 +149,8 @@ void setup() {
     display.display(); 
   }
 
-  increment_from_wakeup();
+  // I am planning on using this but right now it only increments in the remote and not in the fan for some reason.
+  //increment_from_wakeup();
 
   button_time = millis();
 }
@@ -155,6 +161,22 @@ void loop() {
     deviceConnected_prev = deviceConnected;
     delay(500);
     BLEDevice::startAdvertising();
+    button_time = millis();
+  }
+  // this wasn't working properly until very recently so I'm keeping this here in case I change my mind
+  /*else if(!deviceConnected){
+    // Put the ESP32 into deep sleep 20 seconds after disconnecting
+    if(button_time+TIME_TILL_SLEEP < millis()){
+      if(display_working & !display_off){
+        display.clearDisplay();
+        display.display();
+      }
+      esp_deep_sleep_start();
+    }
+  }*/
+  else if(!deviceConnected_prev & deviceConnected){
+    //levelCharacteristic.setValue(data);
+    button_pressed = true;
   }
   
   deviceConnected_prev = deviceConnected;
@@ -227,7 +249,7 @@ void loop() {
     }
   }
 
-  // Put the ESP32 into deep sleep 15 seconds after pressing a button
+  // Put the ESP32 into deep sleep 20 seconds after pressing a button
   if(button_time+TIME_TILL_SLEEP < millis()){
     if(display_working & !display_off){
       display.clearDisplay();
